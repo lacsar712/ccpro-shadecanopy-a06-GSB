@@ -1,11 +1,13 @@
+from datetime import time as datetime_time
 from datetime import timedelta
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
 
-from core.models import ClimateLog, Greenhouse, IrrigationCycle, Zone
+from core.models import ClimateLog, Greenhouse, IrrigationCycle, VentilationSlot, Zone
+from core.serializers import ClimateLogSerializer
 
 User = get_user_model()
 
@@ -162,9 +164,61 @@ class Command(BaseCommand):
             ]
         )
 
+        # 通风窗时段：一号棚白天通风，CO₂ 上限 600 ppm（启用）。
+        vent_slot = VentilationSlot.objects.create(
+            greenhouse=g1,
+            start_time=datetime_time(6, 0),
+            end_time=datetime_time(20, 0),
+            co2_limit_ppm=600,
+            is_active=True,
+        )
+
+        self._probe_co2_interlock(z1, vent_slot)
+
         self.stdout.write(
             self.style.SUCCESS(
                 f"种子完成：温室 {Greenhouse.objects.count()}，分区 {Zone.objects.count()}，"
-                f"气候 {ClimateLog.objects.count()}，轮灌 {IrrigationCycle.objects.count()}"
+                f"气候 {ClimateLog.objects.count()}，轮灌 {IrrigationCycle.objects.count()}，"
+                f"通风时段 {VentilationSlot.objects.count()}"
             )
         )
+
+    def _probe_co2_interlock(self, zone, slot):
+        """走真实写入路径（序列化器）验证联锁：越界写入必须 400 被拒且带时段编号。"""
+        sample_at = timezone.localtime().replace(
+            hour=10, minute=0, second=0, microsecond=0
+        )
+        rejected_payload = {
+            "zoneId": zone.id,
+            "recordedAt": sample_at.isoformat(),
+            "tempC": "25.00",
+            "humidityPct": "66.00",
+            "parUmol": "400.00",
+            "co2Ppm": "900.00",
+        }
+        serializer = ClimateLogSerializer(data=rejected_payload)
+        if serializer.is_valid():
+            raise CommandError(
+                "通风联锁自检失败：CO₂ 900 ppm 超出启用通风时段上限，写入本应被拒却通过了校验"
+            )
+        errors = serializer.errors
+        co2_error = errors.get("co2Ppm") if isinstance(errors, dict) else None
+        detail_text = "".join(co2_error) if isinstance(co2_error, list) else str(co2_error)
+        if f"#{slot.id}" not in detail_text:
+            raise CommandError(
+                f"通风联锁自检失败：拒绝信息须带时段编号 #{slot.id}，实际：{errors}"
+            )
+        self.stdout.write(
+            self.style.WARNING(
+                f"通风联锁自检通过：CO₂ 900 ppm 的气候写入已被拒绝（{detail_text}），未落库。"
+            )
+        )
+
+        # 反向自检：上限内的合规写入应可通过（不落库）。
+        ok_payload = {**rejected_payload, "co2Ppm": "550.00"}
+        ok_serializer = ClimateLogSerializer(data=ok_payload)
+        if not ok_serializer.is_valid():
+            raise CommandError(
+                f"通风联锁自检失败：合规 CO₂ 550 ppm 写入不应被拒，实际：{ok_serializer.errors}"
+            )
+        self.stdout.write("通风联锁自检通过：CO₂ 550 ppm（上限内）写入校验放行。")

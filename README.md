@@ -1,6 +1,6 @@
-# ShadeCanopy-01 · 分区气候日志与轮灌计划
+# ShadeCanopy-01 · 分区气候日志、轮灌计划与通风时段
 
-温室「分区气候日志与轮灌计划」全栈种子项目（非考勤 OA、非库存）。
+温室「分区气候日志、轮灌计划与通风窗时段」全栈种子项目（非考勤 OA、非库存）。
 
 ## 技术栈
 
@@ -47,9 +47,17 @@ docker compose down
 1. **Auth**：JWT `POST /api/auth/token/`，当前用户 `GET /api/auth/me/`
 2. **Greenhouse**：name / location / areaM2 / notes
 3. **Zone**：greenhouseId / zoneCode / cropName / status(`idle|growing|fallow`)；同温室 zoneCode 唯一
-4. **ClimateLog**：zoneId / recordedAt / tempC / humidityPct / parUmol / co2Ppm；**humidityPct ∈ [20, 100]**
+4. **ClimateLog**：zoneId / recordedAt / tempC / humidityPct / parUmol / co2Ppm；**humidityPct ∈ [20, 100]**；**CO₂ 与启用通风时段联锁（见第 6 条）**
 5. **IrrigationCycle**：zoneId / startAt / durationMin / waterLiters / status(`scheduled|running|done|skipped`)
-6. **Dashboard**：温室数、growing 分区数、近 24h 气候日志数、今日 scheduled 轮灌数 → `GET /api/dashboard/`
+6. **VentilationSlot（通风窗时段）**：greenhouseId / startTime / endTime / co2LimitPpm / isActive
+   - 按温室挂每日时刻；结束时刻早于开始时刻表示**跨午夜**时段
+   - **同温室时段相交（含停用时段占位）→ `409`**，响应为中文并给出冲突时段编号
+   - **写路径联锁**：新建 / 编辑气候记录时，若采样时刻落在某启用时段内，CO₂ 不得超过该时段上限，否则 **`400`**，中文错误带时段编号（如 `CO₂ 900 ppm 超出启用通风时段 #1…上限 600 ppm`）
+   - **权限**：登录用户可查看；**种植员可新建 / 编辑时段；停用（含启用状态变更）仅管理员**，越权返回 `403`
+   - 列表接口（`activeCount` 字段）、单条接口（`activeCount` 字段）与仪表盘（`activeVentilationSlotCount`）的启用时段数**同源**，均来自 `core.services.active_ventilation_slot_count()`
+7. **Dashboard**：温室数、growing 分区数、近 24h 气候日志数、今日 scheduled 轮灌数、**启用通风时段数** → `GET /api/dashboard/`
+
+种子数据含一条启用通风时段（东坡一号棚 06:00–20:00，CO₂ 上限 600 ppm）；`seed_data` 会走真实序列化器写入路径发起一条 CO₂ 900 ppm、采样时刻 10:00 的气候写入并确认被 `400` 拒绝（错误须带时段编号），该探针**不落库**，随后再验证 550 ppm 合规写入可通过。
 
 ## API 一览
 
@@ -62,6 +70,7 @@ docker compose down
 | CRUD | `/api/zones/?greenhouseId=&status=` |
 | CRUD | `/api/climate-logs/?zoneId=` |
 | CRUD | `/api/irrigation-cycles/?zoneId=&status=` |
+| CRUD | `/api/ventilation-slots/?greenhouseId=&isActive=` |
 | GET | `/api/dashboard/` |
 
 字段对外使用 camelCase（如 `areaM2`、`zoneCode`、`humidityPct`）。

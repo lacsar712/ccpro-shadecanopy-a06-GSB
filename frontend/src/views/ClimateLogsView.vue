@@ -104,7 +104,7 @@ onMounted(async () => {
     <div class="page-head">
       <div>
         <h1>气候日志</h1>
-        <p>记录温湿度、PAR、CO₂；湿度须 ∈ [20, 100]</p>
+        <p>记录温湿度、PAR、CO₂；湿度须 ∈ [20, 100]；采样时刻处于启用通风时段内时 CO₂ 不得超上限</p>
       </div>
       <div class="actions">
         <select v-model="filterZoneId" @change="load">

@@ -46,13 +46,18 @@ onMounted(async () => {
         <div class="label">今日排程轮灌</div>
         <div class="value">{{ stats.irrigationScheduledToday }}</div>
       </div>
+      <div class="stat">
+        <div class="label">启用通风时段</div>
+        <div class="value">{{ stats.activeVentilationSlotCount }}</div>
+      </div>
     </div>
 
     <div class="panel" style="margin-top: 18px">
       <h3 style="margin-top:0;color:var(--earth-deep)">业务说明</h3>
       <p style="color:var(--muted);margin:0;line-height:1.7">
         本系统面向温室「分区气候日志与轮灌计划」，不涉及考勤 OA 或库存出入库。
-        可在侧栏进入温室、分区、气候与轮灌模块进行 CRUD 操作。
+        通风时段与气候写入联锁：启用时段覆盖采样时刻时，该温室分区气候记录的 CO₂ 不得超过时段上限。
+        可在侧栏进入温室、分区、气候、轮灌与通风时段模块进行操作。
       </p>
     </div>
   </div>

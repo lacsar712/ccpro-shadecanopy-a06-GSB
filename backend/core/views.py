@@ -4,16 +4,20 @@ from django.db.models import Count
 from django.utils import timezone
 from rest_framework import viewsets
 from rest_framework.decorators import api_view, permission_classes
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from .models import ClimateLog, Greenhouse, IrrigationCycle, Zone
+from .models import ClimateLog, Greenhouse, IrrigationCycle, VentilationSlot, Zone
+from .permissions import VentilationSlotPermission
 from .serializers import (
     ClimateLogSerializer,
     GreenhouseSerializer,
     IrrigationCycleSerializer,
+    VentilationSlotSerializer,
     ZoneSerializer,
 )
+from .services import active_ventilation_slot_count
 
 
 class GreenhouseViewSet(viewsets.ModelViewSet):
@@ -60,6 +64,42 @@ class IrrigationCycleViewSet(viewsets.ModelViewSet):
         return qs
 
 
+class VentilationSlotPagination(PageNumberPagination):
+    """列表响应附带启用时段数，与单条 / 仪表盘同源。"""
+
+    def get_paginated_response(self, data):
+        return Response(
+            {
+                "count": self.page.paginator.count,
+                "next": self.get_next_link(),
+                "previous": self.get_previous_link(),
+                "activeCount": active_ventilation_slot_count(),
+                "results": data,
+            }
+        )
+
+
+class VentilationSlotViewSet(viewsets.ModelViewSet):
+    serializer_class = VentilationSlotSerializer
+    permission_classes = [IsAuthenticated, VentilationSlotPermission]
+    pagination_class = VentilationSlotPagination
+
+    def get_queryset(self):
+        qs = VentilationSlot.objects.select_related("greenhouse").all()
+        greenhouse_id = self.request.query_params.get("greenhouseId")
+        is_active = self.request.query_params.get("isActive")
+        if greenhouse_id:
+            qs = qs.filter(greenhouse_id=greenhouse_id)
+        if is_active in ("true", "false"):
+            qs = qs.filter(is_active=is_active == "true")
+        return qs
+
+    def retrieve(self, request, *args, **kwargs):
+        response = super().retrieve(request, *args, **kwargs)
+        response.data["activeCount"] = active_ventilation_slot_count()
+        return response
+
+
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def dashboard_stats(request):
@@ -79,5 +119,7 @@ def dashboard_stats(request):
             start_at__gte=today_start,
             start_at__lt=today_end,
         ).count(),
+        # 与通风时段列表 / 单条接口共用 active_ventilation_slot_count()
+        "activeVentilationSlotCount": active_ventilation_slot_count(),
     }
     return Response(data)
