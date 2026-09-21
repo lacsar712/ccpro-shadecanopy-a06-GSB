@@ -7,11 +7,20 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from .models import ClimateLog, Greenhouse, IrrigationCycle, Zone
+from .models import (
+    ClimateLog,
+    Greenhouse,
+    IrrigationCycle,
+    VentilationSlot,
+    Zone,
+    enabled_vent_slot_count,
+    enabled_vent_slot_counts,
+)
 from .serializers import (
     ClimateLogSerializer,
     GreenhouseSerializer,
     IrrigationCycleSerializer,
+    VentilationSlotSerializer,
     ZoneSerializer,
 )
 
@@ -60,6 +69,29 @@ class IrrigationCycleViewSet(viewsets.ModelViewSet):
         return qs
 
 
+class VentilationSlotViewSet(viewsets.ModelViewSet):
+    serializer_class = VentilationSlotSerializer
+
+    def get_queryset(self):
+        qs = VentilationSlot.objects.select_related("greenhouse").all()
+        greenhouse_id = self.request.query_params.get("greenhouseId")
+        if greenhouse_id:
+            qs = qs.filter(greenhouse_id=greenhouse_id)
+        return qs
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        objs = page if page is not None else list(queryset)
+        # 列表的 activeVentCount 与单条、仪表盘同源（同一计数函数）。
+        counts = enabled_vent_slot_counts({o.greenhouse_id for o in objs})
+        context = {**self.get_serializer_context(), "active_vent_counts": counts}
+        serializer = self.get_serializer(objs, many=True, context=context)
+        if page is not None:
+            return self.get_paginated_response(serializer.data)
+        return Response(serializer.data)
+
+
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def dashboard_stats(request):
@@ -79,5 +111,7 @@ def dashboard_stats(request):
             start_at__gte=today_start,
             start_at__lt=today_end,
         ).count(),
+        # 与通风时段列表/单条接口同源。
+        "activeVentSlotCount": enabled_vent_slot_count(),
     }
     return Response(data)

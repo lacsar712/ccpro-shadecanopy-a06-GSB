@@ -49,7 +49,19 @@ docker compose down
 3. **Zone**：greenhouseId / zoneCode / cropName / status(`idle|growing|fallow`)；同温室 zoneCode 唯一
 4. **ClimateLog**：zoneId / recordedAt / tempC / humidityPct / parUmol / co2Ppm；**humidityPct ∈ [20, 100]**
 5. **IrrigationCycle**：zoneId / startAt / durationMin / waterLiters / status(`scheduled|running|done|skipped`)
-6. **Dashboard**：温室数、growing 分区数、近 24h 气候日志数、今日 scheduled 轮灌数 → `GET /api/dashboard/`
+6. **VentilationSlot（通风窗时段）**：greenhouseId / startTime / endTime / co2LimitPpm / isEnabled（每日时刻，支持跨午夜）
+7. **Dashboard**：温室数、growing 分区数、近 24h 气候日志数、今日 scheduled 轮灌数、**启用通风时段数** → `GET /api/dashboard/`
+
+### 通风时段业务规则
+
+- **挂温室**：时段从属于某一温室；`endTime < startTime` 表示跨午夜（如 23:00–02:00），两端时刻相等返回 400。
+- **相交 409**：同一温室内两条时段时间范围相交（半开区间 `[start, end)`，首尾相接不算相交）时，新建/更新返回 **409**，中文信息给出相撞的时段编号。
+- **写路径联锁（核心）**：当某分区新建/更新气候记录，且采样时刻 `recordedAt`（按 Asia/Shanghai 的当日时刻）被该温室**启用中**的通风时段覆盖时，`co2Ppm` 不得超过该时段的 `co2LimitPpm`；否则返回 **400**，中文错误并带通风时段编号，例如：
+  `通风时段 #1（08:00-11:00）覆盖该采样时刻，二氧化碳 900.00 ppm 超过上限 800 ppm`。
+  未被任何启用时段覆盖的时刻不做 CO₂ 限制。
+- **权限**：种植员（grower）可新建/编辑时段；**停用仅管理员（admin）**——种植员将时段置为停用（含新建即停用）返回 **403**；未认证返回 401。
+- **启用时段数同源**：通风时段列表接口与单条接口均给出该温室的 `activeVentCount`，仪表盘给出全温室 `activeVentSlotCount`，三者取自同一计数函数（`core.models.enabled_vent_slot_count`），口径一致、随停用/启用实时联动。
+- **种子**：`seed_data` 会写入一条启用时段（东坡一号棚 08:00–11:00，上限 800 ppm），随后经与线上同一写路径的序列化器尝试写入一条落在时段内、CO₂=900 的气候记录，预期被 400 拒绝且不落库（命令行打印拒绝原因），并写入一条 CO₂=760 的合规记录作为对照。
 
 ## API 一览
 
@@ -62,6 +74,7 @@ docker compose down
 | CRUD | `/api/zones/?greenhouseId=&status=` |
 | CRUD | `/api/climate-logs/?zoneId=` |
 | CRUD | `/api/irrigation-cycles/?zoneId=&status=` |
+| CRUD | `/api/ventilation-slots/?greenhouseId=` |
 | GET | `/api/dashboard/` |
 
 字段对外使用 camelCase（如 `areaM2`、`zoneCode`、`humidityPct`）。

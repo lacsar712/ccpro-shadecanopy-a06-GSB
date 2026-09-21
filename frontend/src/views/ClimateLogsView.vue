@@ -1,6 +1,6 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
-import api from '../api'
+import api, { errorMessage } from '../api'
 
 const list = ref([])
 const zones = ref([])
@@ -83,7 +83,8 @@ async function save() {
     resetForm()
     await load()
   } catch (e) {
-    error.value = JSON.stringify(e.response?.data || '保存失败')
+    // 通风联锁越界 → 400 中文（含通风时段编号）；湿度等校验同理。
+    error.value = errorMessage(e, '保存失败')
   }
 }
 

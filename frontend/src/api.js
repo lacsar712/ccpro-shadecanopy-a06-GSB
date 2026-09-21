@@ -36,4 +36,21 @@ api.interceptors.response.use(
   }
 )
 
+/**
+ * 从 DRF 错误体提取中文信息：
+ * - 409 / 403 等 APIException：{ detail: "..." }
+ * - 400 校验失败：{ 字段: ["..."] } 或 { 字段: "..." } / 非字段错误列表
+ */
+export function errorMessage(error, fallback = '保存失败') {
+  const data = error?.response?.data
+  if (!data) return fallback
+  if (typeof data === 'string') return data
+  const parts = []
+  for (const [key, value] of Object.entries(data)) {
+    const text = Array.isArray(value) ? value.join('；') : String(value)
+    parts.push(key === 'detail' || key === 'non_field_errors' ? text : `${text}`)
+  }
+  return parts.filter(Boolean).join('；') || fallback
+}
+
 export default api
